@@ -1,0 +1,31 @@
+[package]
+name = "babel-score"
+description = "Rangs percentiles, score composite U(v) et tests de santé"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["store"]
+# Lecture et écriture Parquet de scores.parquet. Le viewer s'en passe pour
+# ne pas embarquer Arrow.
+store = ["dep:arrow", "dep:parquet", "dep:babel-ingest", "dep:babel-signals"]
+
+[dependencies]
+babel-core.workspace = true
+babel-ingest = { workspace = true, optional = true }
+babel-signals = { workspace = true, optional = true }
+arrow = { workspace = true, optional = true }
+parquet = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "score"
+harness = false

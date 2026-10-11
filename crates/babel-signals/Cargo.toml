@@ -1,0 +1,25 @@
+[package]
+name = "babel-signals"
+description = "Signaux sans modèle : S_omit, S_len (median polish), S_intra (chrF)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+babel-core.workspace = true
+babel-ingest.workspace = true
+arrow.workspace = true
+parquet.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "signals"
+harness = false

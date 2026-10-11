@@ -1,0 +1,62 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/babel"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.90"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+
+[workspace.dependencies]
+babel-core = { path = "crates/babel-core" }
+babel-ingest = { path = "crates/babel-ingest" }
+babel-signals = { path = "crates/babel-signals" }
+babel-score = { path = "crates/babel-score", default-features = false }
+babel-atlas = { path = "crates/babel-atlas" }
+babel-view = { path = "crates/babel-view" }
+
+anyhow = "1"
+arrow = { version = "60", default-features = false }
+blake3 = "1.8"
+bytemuck = { version = "1.25", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+csv = "1.4"
+eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts"] }
+egui = "0.36"
+egui-wgpu = "0.36"
+image = { version = "0.25", default-features = false, features = ["png"] }
+indicatif = "0.18"
+parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
+proptest = "1.12"
+rayon = "1.12"
+rkyv = "0.8"
+serde = { version = "1", features = ["derive"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
+thiserror = "2"
+toml = "1.1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+unicode-normalization = "0.1"
+unicode-script = "0.5"
+unicode-segmentation = "1.13"
+zstd = "0.14"
+
+# Profil de développement : dépendances optimisées, pas d'informations de
+# débogage (le disque système de la machine cible est presque plein).
+[profile.dev]
+opt-level = 1
+debug = false
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+debug = false

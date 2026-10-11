@@ -1,0 +1,141 @@
+# Configuration de Babel. Tous les paramètres du pipeline et du viewer vivent
+# ici : aucun seuil n'est écrit en dur dans le code.
+# Les chemins sont relatifs au répertoire d'où la commande `babel` est lancée.
+
+[paths]
+# Répertoire des données (ignoré par git). Le déplacer sur un autre disque
+# suffit à y envoyer le corpus, les résultats et l'atlas.
+data = "data"
+exclusions = "config/exclusions.toml"
+
+[fetch]
+ebible_url = "https://github.com/BibleNLP/ebible"
+stepbible_url = "https://github.com/STEPBible/STEPBible-Data"
+# "all"   : tout le corpus eBible (environ 2,3 Go sur disque).
+# "multi" : seulement les langues qui ont au moins deux traductions
+#           (environ 0,8 Go), suffisant pour les trois signaux de la phase 1.
+selection = "multi"
+# Traductions toujours téléchargées, quel que soit le mode de sélection.
+always_include = ["fra-fraLSG", "eng-engkjvcpb"]
+# STEPBible (TAGNT, TAHOT) ne sert qu'à partir de la phase 2.
+stepbible = false
+# Au-delà de ce nombre de fichiers à télécharger, `babel fetch` demande une
+# confirmation explicite (option --yes) : le cahier des charges impose de
+# demander avant tout téléchargement de plus de 2 Go.
+confirm_above_files = 400
+
+[ingest]
+# Une traduction ne participe aux signaux d'un livre que si elle en couvre
+# au moins cette part (§ 3).
+coverage_min = 0.90
+# Détection des décalages de versification : un chapitre est signalé quand
+# le profil de longueurs de la traduction corrèle mieux avec le consensus
+# décalé d'un verset qu'avec le consensus aligné, de plus de `shift_margin`.
+shift_min_verses = 12
+shift_margin = 0.25
+# Nombre de chapitres signalés à partir duquel une traduction est proposée
+# à l'exclusion.
+shift_chapters_alert = 25
+# Deux traductions d'une même langue sont déclarées en double quand cette
+# part de leurs versets communs est identique.
+duplicate_identical_share = 0.95
+# Une ligne est dite « non textuelle » quand moins de cette part de ses
+# caractères (hors espaces) sont des lettres.
+non_text_letter_share = 0.50
+# Base textuelle du NT (§ 4.4) : part des versets diagnostiques présents
+# au-dessus de laquelle la traduction suit le Texte reçu, et en dessous de
+# laquelle elle suit le texte critique.
+textbase_received_min = 0.75
+textbase_critical_max = 0.25
+# Versets absents des éditions critiques, au format de vref.txt.
+diagnostic_verses = [
+    "MAT 17:21", "MAT 18:11", "MAT 23:14", "MRK 7:16", "MRK 9:44", "MRK 9:46",
+    "MRK 11:26", "MRK 15:28", "LUK 17:36", "LUK 23:17", "JHN 5:4", "ACT 8:37",
+    "ACT 15:34", "ACT 24:7", "ACT 28:29", "ROM 16:24",
+]
+
+[signals]
+# Nombre minimal de traductions éligibles pour qu'un verset reçoive un score.
+min_translations = 5
+# Median polish de S_len : nombre maximal d'itérations et seuil d'arrêt
+# (variation maximale des effets, en log-longueur).
+len_polish_iterations = 20
+len_polish_tolerance = 0.0005
+# chrF : ordre maximal des n-grammes de caractères et poids β du rappel.
+chrf_max_order = 6
+chrf_beta = 2.0
+# Redondance (§ 4.2) : deux traductions d'une même langue sont regroupées
+# quand leur chrF moyen dépasse ce seuil…
+redundancy_chrf = 0.80
+# … mesuré sur un verset tous les `redundancy_stride`.
+redundancy_stride = 16
+# Entre deux écritures différentes d'une même langue (translittérations),
+# le chrF ne dit rien : on regroupe quand les résidus de longueur corrèlent
+# au-delà de ce seuil.
+redundancy_len_correlation = 0.90
+# S_intra : une langue pèse (nombre de traductions indépendantes − 1),
+# plafonné à cette valeur pour qu'une langue très représentée (l'anglais)
+# ne dicte pas le signal à elle seule.
+intra_language_weight_cap = 8.0
+
+[score]
+# Poids ω des signaux dans le composite U(v) ; ils sont renormalisés pour
+# sommer à 1 et restent réglables en direct dans le viewer.
+[score.weights]
+omit = 1.0
+len = 1.0
+intra = 1.0
+
+[health]
+# Tests de santé du § 5 : ces versets doivent se classer dans cette part
+# supérieure du NT.
+top_share = 0.01
+omit_verses = ["ACT 8:37", "MAT 17:21", "MAT 18:11", "LUK 17:36"]
+len_verses = ["1JN 5:7"]
+
+[atlas]
+# Traductions de référence dont le texte est embarqué pour le viewer.
+references = ["fra-fraLSG", "eng-engkjvcpb"]
+# Vue Mur : retour à la ligne d'un chapitre après ce nombre de versets.
+wall_wrap = 40
+# Vue Mur : rangées réservées au-dessus de chaque livre pour son nom.
+wall_header_rows = 3
+# Espacements de la vue Mur, en cellules : entre deux colonnes d'une
+# section, entre deux sections, entre deux étagères.
+wall_column_gap = 2
+wall_section_gap = 7
+wall_shelf_gap = 7
+# Rapport largeur / hauteur visé pour la carte entière.
+wall_aspect = 1.55
+# Hauteurs d'étagère essayées (en rangées) pour approcher ce rapport.
+wall_shelf_rows_min = 40
+wall_shelf_rows_max = 220
+# Vue Hilbert : la courbe parcourt une grille de 2^ordre cellules de côté.
+hilbert_order = 8
+# Niveau de compression zstd des blocs de textes.
+text_zstd_level = 9
+
+[view]
+# Part de la cellule laissée vide autour de chaque verset (effet mosaïque).
+cell_gap = 0.10
+# Seuils du zoom sémantique : taille d'une cellule à l'écran, en pixels.
+z1_px = 12.0
+z2_px = 40.0
+z3_px = 160.0
+z4_px = 600.0
+# Arrondi des coins à partir de Z2, en part de la taille de cellule.
+corner_radius = 0.15
+# Durées des animations, en millisecondes.
+view_transition_ms = 600
+flight_min_ms = 450
+flight_max_ms = 700
+tooltip_delay_ms = 150
+# Zoom : facteur par cran de molette et amortissement de l'inertie (part de
+# la vitesse perdue par seconde, en échelle logarithmique).
+wheel_zoom = 1.18
+zoom_inertia = 12.0
+# Zoom maximal : taille d'une cellule à l'écran, en pixels.
+max_cell_px = 900.0
+# Marge autour de la carte quand tout est affiché (touche F), en part de
+# la vue.
+fit_margin = 0.04

@@ -1,0 +1,23 @@
+[package]
+name = "babel-view"
+description = "Application graphique de Babel : carte de chaleur zoomable (eframe/egui + wgpu)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+babel-core.workspace = true
+babel-atlas.workspace = true
+babel-score.workspace = true
+bytemuck.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+image.workspace = true
+serde.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

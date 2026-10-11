@@ -1,0 +1,23 @@
+[package]
+name = "babel-ingest"
+description = "Ingestion du corpus eBible vers Parquet et rapport qualité"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+babel-core.workspace = true
+arrow.workspace = true
+blake3.workspace = true
+csv.workspace = true
+parquet.workspace = true
+rayon.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+unicode-normalization.workspace = true
+unicode-script.workspace = true
+unicode-segmentation.workspace = true

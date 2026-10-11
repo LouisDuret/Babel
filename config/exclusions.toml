@@ -1,0 +1,14 @@
+# Traductions exclues du calcul des signaux, avec la raison.
+#
+# Ce fichier est éditable à la main. `babel ingest` écrit ses propositions
+# dans data/report/exclusions.suggested.toml ; recopier ici celles qui sont
+# retenues. Une entrée désigne soit une langue (code ISO 639-3), soit une
+# traduction (nom du fichier eBible sans « .txt »).
+
+[[exclude]]
+language = "grc"
+reason = "Texte source grec (éditions du NT, Septante) : ce n'est pas une traduction."
+
+[[exclude]]
+language = "hbo"
+reason = "Texte source hébreu : ce n'est pas une traduction."

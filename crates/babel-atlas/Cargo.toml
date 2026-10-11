@@ -1,0 +1,15 @@
+[package]
+name = "babel-atlas"
+description = "Format binaire du viewer (rkyv), dispositions Mur et Hilbert, blocs de textes zstd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+babel-core.workspace = true
+rkyv.workspace = true
+thiserror.workspace = true
+zstd.workspace = true
