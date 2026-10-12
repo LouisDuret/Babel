@@ -9,6 +9,8 @@ mod overlay;
 mod palette;
 mod panels;
 mod scene;
+mod scope;
+mod scope_panel;
 mod state;
 mod theme;
 
@@ -33,6 +35,8 @@ pub struct Options {
     /// Pointeur simulé à cette position (en points), pour capturer le
     /// survol et l'infobulle sans souris.
     pub pointer: Option<[f32; 2]>,
+    /// Clique une fois à la position du pointeur simulé.
+    pub click: bool,
     /// Métrique de départ : composite, omit, len, intra.
     pub metric: Option<String>,
     /// Vue de départ : mur ou hilbert.

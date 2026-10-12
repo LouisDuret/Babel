@@ -139,3 +139,13 @@ max_cell_px = 900.0
 # Marge autour de la carte quand tout est affiché (touche F), en part de
 # la vue.
 fit_margin = 0.04
+# Sélection d'un chapitre, d'un livre ou d'une section : part de leur
+# couleur que perdent les cellules hors de la sélection.
+focus_dim = 0.72
+# Bilan d'une sélection : un verset est dit « très incertain » quand son
+# rang percentile dans la Bible atteint cette valeur.
+hot_rank = 0.90
+# Bilan : nombre de classes de l'histogramme de U, et nombre de versets
+# listés parmi les plus incertains.
+histogram_bins = 20
+top_verses = 8

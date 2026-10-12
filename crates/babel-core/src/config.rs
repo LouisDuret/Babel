@@ -206,6 +206,10 @@ pub struct View {
     pub zoom_inertia: f32,
     pub max_cell_px: f32,
     pub fit_margin: f32,
+    pub focus_dim: f32,
+    pub hot_rank: f32,
+    pub histogram_bins: usize,
+    pub top_verses: usize,
 }
 
 impl Config {
@@ -259,6 +263,13 @@ impl Config {
         unit("signals.redundancy_chrf", self.signals.redundancy_chrf)?;
         unit("health.top_share", self.health.top_share)?;
         unit("view.cell_gap", self.view.cell_gap)?;
+        unit("view.focus_dim", self.view.focus_dim)?;
+        unit("view.hot_rank", self.view.hot_rank)?;
+        if self.view.histogram_bins == 0 {
+            return Err(ConfigError::Invalid(
+                "view.histogram_bins doit être ≥ 1".into(),
+            ));
+        }
         if self.signals.chrf_max_order == 0 {
             return Err(ConfigError::Invalid(
                 "signals.chrf_max_order doit être ≥ 1".into(),

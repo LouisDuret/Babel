@@ -80,6 +80,9 @@ enum Command {
         /// le survol et l'infobulle : --pointer 800x500.
         #[arg(long, value_name = "XxY", value_parser = parse_point)]
         pointer: Option<[f32; 2]>,
+        /// Clique une fois à la position du pointeur simulé.
+        #[arg(long, requires = "pointer")]
+        click: bool,
         /// Métrique affichée : composite, omit, len ou intra.
         #[arg(long)]
         metric: Option<String>,
@@ -176,6 +179,7 @@ fn main() -> Result<()> {
             at,
             search,
             pointer,
+            click,
             metric,
             layout,
             screenshot,
@@ -200,6 +204,7 @@ fn main() -> Result<()> {
                 at,
                 search,
                 pointer,
+                click,
                 metric,
                 layout,
                 screenshot,

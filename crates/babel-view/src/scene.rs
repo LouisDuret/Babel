@@ -6,7 +6,6 @@
 use babel_atlas::Atlas;
 use babel_atlas::layout::hilbert_xy2d;
 use babel_core::Versification;
-use babel_core::versification::Target;
 use egui::{Vec2, vec2};
 
 /// Valeur envoyée au shader pour un verset sans données (hachures).
@@ -138,11 +137,6 @@ impl Scene {
             max = max.max(vec2(p[0], p[1]));
         }
         Some((min, max + Vec2::splat(1.0)))
-    }
-
-    /// Boîte englobante d'une cible de navigation.
-    pub fn target_bounds(&self, layout: Layout, target: Target) -> Option<(Vec2, Vec2)> {
-        self.range_bounds(layout, self.versification.target_range(target)?)
     }
 
     /// Verset sous un point du monde : inversion analytique de la
@@ -335,20 +329,9 @@ mod tests {
             assert!(p.x >= min.x && p.x + 1.0 <= max.x && p.y >= min.y && p.y + 1.0 <= max.y);
         }
         // Le chapitre 2 de la Genèse : une rangée de vingt cellules.
-        let (min, max) = s
-            .target_bounds(
-                Layout::Wall,
-                Target::Chapter {
-                    book: 0,
-                    chapter: 1,
-                },
-            )
-            .expect("chapitre");
+        let (min, max) = s.range_bounds(Layout::Wall, 20..40).expect("chapitre");
         assert_eq!(max - min, vec2(20.0, 1.0));
-        assert!(
-            s.target_bounds(Layout::Wall, Target::Book { book: 9 })
-                .is_none()
-        );
+        assert!(s.range_bounds(Layout::Wall, 500..510).is_none());
     }
 
     #[test]

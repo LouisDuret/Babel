@@ -4,15 +4,16 @@ use crate::camera::{Camera, Flight, ease_in_out};
 use crate::canvas::{CanvasFrame, CanvasResources, Uniforms};
 use crate::palette::{Palette, PaletteKind};
 use crate::scene::{Layout, Metric, Scene};
+use crate::scope::{Selection, Summary};
 use crate::state::Saved;
 use crate::{Options, theme};
 use babel_atlas::texts::TextReader;
 use babel_core::config::View;
+use babel_core::reference;
 use babel_core::stats::percentile_ranks;
-use babel_core::versification::Target;
-use babel_core::{VerseId, reference};
 use egui::{Color32, Key, Modifiers, PointerButton, Pos2, Rect, Vec2};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// Défilement, en points, d'un cran de molette dans egui.
@@ -21,12 +22,18 @@ const WHEEL_NOTCH_POINTS: f32 = 50.0;
 const KEY_PAN_SHARE: f32 = 0.15;
 /// Zoom minimal, en part de l'échelle qui affiche toute la carte.
 const MIN_ZOOM_SHARE: f32 = 0.6;
+/// Écart relatif d'échelle en dessous duquel la caméra est considérée comme
+/// cadrant toute la carte.
+const FIT_TOLERANCE: f32 = 0.005;
 /// Images rendues avant une capture demandée en ligne de commande, le temps
 /// que la mise en page se stabilise.
 const SCREENSHOT_SETTLE_FRAMES: u64 = 4;
 /// Temps laissé à l'infobulle avant une capture avec pointeur simulé, en
 /// secondes.
 const SIMULATED_POINTER_SETTLE: f64 = 0.6;
+/// Rang de l'entrée à laquelle le clic simulé enfonce le bouton ; il le
+/// relâche à la suivante.
+const SIMULATED_CLICK_FRAME: u64 = 8;
 
 /// Taille de cellule atteinte au plus fort du zoom pendant une mesure.
 const BENCH_MAX_CELL_PX: f32 = 48.0;
@@ -81,7 +88,15 @@ impl ZoomLevel {
 pub struct Suggestion {
     pub label: String,
     pub detail: String,
-    pub target: Target,
+    pub selection: Selection,
+}
+
+/// Bilan de la sélection courante, gardé tant que ni la sélection ni les
+/// valeurs ne changent.
+struct CachedSummary {
+    selection: Selection,
+    version: u64,
+    summary: Rc<Summary>,
 }
 
 pub struct BabelApp {
@@ -116,7 +131,17 @@ pub struct BabelApp {
     pub(crate) hovered: Option<usize>,
     hover_since: f64,
     pub(crate) pointer: Option<Pos2>,
-    pub(crate) selected: Option<usize>,
+    pub(crate) selected: Option<Selection>,
+    /// Zones cliquables des noms de livres et de sections, relevées à
+    /// l'image précédente.
+    pub(crate) label_hits: Vec<(Rect, Selection)>,
+    /// Nom de livre ou de section sous le pointeur.
+    pub(crate) hovered_label: Option<Selection>,
+    /// Vérifier à la prochaine image que la sélection est visible.
+    reveal: bool,
+    /// Compteur incrémenté à chaque recalcul du composite.
+    values_version: u64,
+    summary: Option<CachedSummary>,
 
     pub(crate) search: String,
     pub(crate) suggestions: Vec<Suggestion>,
@@ -139,6 +164,10 @@ pub struct BabelApp {
     initial_search: Option<String>,
     /// Position de pointeur injectée à chaque image (captures de test).
     simulated_pointer: Option<[f32; 2]>,
+    /// Clic simulé à la position du pointeur simulé.
+    simulated_click: bool,
+    /// Nombre d'entrées déjà passées par le pointeur simulé.
+    simulated_inputs: u64,
     screenshot: Option<PathBuf>,
     screenshot_requested: bool,
     capture_dir: PathBuf,
@@ -249,6 +278,11 @@ impl BabelApp {
             hover_since: 0.0,
             pointer: None,
             selected: None,
+            label_hits: Vec::new(),
+            hovered_label: None,
+            reveal: false,
+            values_version: 0,
+            summary: None,
             search: String::new(),
             suggestions: Vec::new(),
             focus_search: false,
@@ -264,6 +298,8 @@ impl BabelApp {
             initial_at: options.at,
             initial_search: options.search,
             simulated_pointer: options.pointer,
+            simulated_click: options.click,
+            simulated_inputs: 0,
             screenshot: options.screenshot,
             screenshot_requested: false,
             capture_dir,
@@ -314,6 +350,7 @@ impl BabelApp {
     pub(crate) fn refresh_values(&mut self, all: bool) {
         self.composite = self.scene.composite(&self.weights, &self.enabled);
         self.composite_rank = percentile_ranks(&self.composite);
+        self.values_version += 1;
         self.uploads.push((
             0,
             Arc::new(
@@ -328,6 +365,39 @@ impl BabelApp {
             }
         }
         self.shown = self.scene.metric(self.metric, &self.composite);
+    }
+
+    /// Verset sélectionné, si la sélection est un verset.
+    pub(crate) fn selected_verse(&self) -> Option<usize> {
+        match self.selected {
+            Some(Selection::Verse(verse)) => Some(verse),
+            _ => None,
+        }
+    }
+
+    /// Bilan d'une sélection, recalculé seulement quand elle change ou
+    /// quand les poids changent. `None` pour un verset.
+    pub(crate) fn scope_summary(&mut self, selection: Selection) -> Option<Rc<Summary>> {
+        if let Some(cached) = &self.summary
+            && cached.selection == selection
+            && cached.version == self.values_version
+        {
+            return Some(Rc::clone(&cached.summary));
+        }
+        let summary = Rc::new(self.scene.summarize(
+            selection,
+            &self.composite,
+            &self.composite_rank,
+            self.cfg.hot_rank,
+            self.cfg.histogram_bins,
+            self.cfg.top_verses,
+        )?);
+        self.summary = Some(CachedSummary {
+            selection,
+            version: self.values_version,
+            summary: Rc::clone(&summary),
+        });
+        Some(summary)
     }
 
     pub(crate) fn set_metric(&mut self, metric: Metric) {
@@ -373,7 +443,7 @@ impl BabelApp {
             now,
         );
         let target = match self.selected {
-            Some(verse) => self.camera_for(Target::Verse(VerseId(verse as u16))),
+            Some(selection) => self.camera_for(selection),
             None => Some(self.fit_camera()),
         };
         if let Some(target) = target {
@@ -392,8 +462,54 @@ impl BabelApp {
 
     /// Caméra qui affiche toute la carte.
     pub(crate) fn fit_camera(&self) -> Camera {
+        self.fit_camera_in(self.view.size())
+    }
+
+    /// Caméra qui affiche toute la carte dans un canevas de taille `size`.
+    fn fit_camera_in(&self, size: Vec2) -> Camera {
         let (min, max) = self.scene.bounds(self.layout);
-        Camera::fit(self.view.size(), min, max, self.cfg.fit_margin)
+        Camera::fit(size, min, max, self.cfg.fit_margin)
+    }
+
+    /// Le canevas a changé de taille (fenêtre redimensionnée, panneau ouvert
+    /// ou fermé). Si la carte entière était affichée, elle le reste ; sinon
+    /// le contenu garde sa place à l'écran au lieu de glisser avec le centre.
+    fn canvas_resized(&mut self, previous: Vec2) {
+        if self.flight.is_some() || previous.x <= 0.0 || previous.y <= 0.0 {
+            return;
+        }
+        let fitted = self.fit_camera_in(previous);
+        let at_fit = (self.camera.scale / fitted.scale - 1.0).abs() < FIT_TOLERANCE
+            && (self.camera.center - fitted.center).length() * fitted.scale < 1.0;
+        if at_fit {
+            self.camera = self.fit_camera();
+        } else {
+            // Le coin haut gauche du canevas reste sur le même point du monde.
+            self.camera.center += (self.view.size() - previous) / (2.0 * self.camera.scale);
+        }
+    }
+
+    /// Après une sélection par clic : si elle n'est plus entièrement
+    /// visible, la caméra s'y rend.
+    fn reveal_selection(&mut self, now: f64) {
+        let Some(selection) = self.selected else {
+            return;
+        };
+        let bounds = self
+            .scene
+            .selection_range(selection)
+            .and_then(|range| self.scene.range_bounds(self.layout, range));
+        let Some((min, max)) = bounds else {
+            return;
+        };
+        let (view_min, view_max) = self.camera.visible(self.view);
+        let visible = min.x >= view_min.x
+            && min.y >= view_min.y
+            && max.x <= view_max.x
+            && max.y <= view_max.y;
+        if !visible && let Some(camera) = self.camera_for(selection) {
+            self.fly_to(camera, now);
+        }
     }
 
     fn scale_limits(&self) -> (f32, f32) {
@@ -403,17 +519,20 @@ impl BabelApp {
         )
     }
 
-    /// Caméra qui cadre une cible, sans dépasser le niveau de zoom utile :
-    /// un livre s'ouvre en Z1, un chapitre en Z2, un verset en Z3.
-    pub(crate) fn camera_for(&self, target: Target) -> Option<Camera> {
-        let (min, max) = self.scene.target_bounds(self.layout, target)?;
-        let cap = match target {
-            Target::Book { .. } => self.cfg.z2_px * 0.7,
-            Target::Chapter { .. } => self.cfg.z3_px * 0.6,
-            Target::Verse(_) => self.cfg.z3_px * 1.6,
+    /// Caméra qui cadre une sélection, sans dépasser le niveau de zoom
+    /// utile : une section reste en Z0, un livre s'ouvre en Z1, un chapitre
+    /// en Z2, un verset en Z3.
+    pub(crate) fn camera_for(&self, selection: Selection) -> Option<Camera> {
+        let range = self.scene.selection_range(selection)?;
+        let (min, max) = self.scene.range_bounds(self.layout, range)?;
+        let cap = match selection {
+            Selection::Section(_) => self.cfg.z1_px,
+            Selection::Book(_) => self.cfg.z2_px * 0.7,
+            Selection::Chapter { .. } => self.cfg.z3_px * 0.6,
+            Selection::Verse(_) => self.cfg.z3_px * 1.6,
         };
         // Un verset seul occupe au plus le tiers de la vue.
-        let margin = if matches!(target, Target::Verse(_)) {
+        let margin = if matches!(selection, Selection::Verse(_)) {
             0.33
         } else {
             0.12
@@ -434,12 +553,10 @@ impl BabelApp {
         ));
     }
 
-    /// Vole vers une cible ; un verset est aussi sélectionné.
-    pub(crate) fn go(&mut self, target: Target, now: f64) {
-        if let Target::Verse(id) = target {
-            self.selected = Some(id.index());
-        }
-        if let Some(camera) = self.camera_for(target) {
+    /// Sélectionne une portée et vole vers elle.
+    pub(crate) fn go(&mut self, selection: Selection, now: f64) {
+        self.selected = Some(selection);
+        if let Some(camera) = self.camera_for(selection) {
             self.fly_to(camera, now);
         }
     }
@@ -479,10 +596,9 @@ impl BabelApp {
         if let Some(at) = self.initial_at.take() {
             match reference::lookup(&at, &self.scene.versification) {
                 Some(target) => {
-                    if let Target::Verse(id) = target {
-                        self.selected = Some(id.index());
-                    }
-                    if let Some(camera) = self.camera_for(target) {
+                    let selection = Selection::from(target);
+                    self.selected = Some(selection);
+                    if let Some(camera) = self.camera_for(selection) {
                         self.camera = camera;
                     }
                 }
@@ -607,28 +723,36 @@ impl BabelApp {
                 let mut target = self.flight.map_or(self.camera, |f| f.target());
                 target.center += delta / target.scale;
                 self.fly_to(target, now);
-            } else if let Some(verse) = self.selected {
+            } else if let Some(Selection::Verse(verse)) = self.selected {
                 // Verset ou chapitre voisin ; la caméra suit la sélection.
                 let next = if chapter {
                     self.scene.step_chapter(verse, step)
                 } else {
                     self.scene.step_verse(verse, step)
                 };
-                self.selected = Some(next);
+                self.selected = Some(Selection::Verse(next));
                 self.follow_selection(now);
+            } else if let Some(selection) = self.selected {
+                // Chapitre, livre ou section voisin : la caméra s'y rend.
+                let next = self.scene.step_selection(selection, step);
+                if next != selection {
+                    self.go(next, now);
+                }
             }
         }
         if pressed(Key::Enter)
-            && let Some(verse) = self.selected
+            && let Some(selection) = self.selected
         {
-            self.go(Target::Verse(VerseId(verse as u16)), now);
+            self.go(selection, now);
         }
     }
 
     /// Ramène le verset sélectionné dans la vue s'il en est sorti, sans
     /// changer d'échelle.
     fn follow_selection(&mut self, now: f64) {
-        let Some(verse) = self.selected else { return };
+        let Some(verse) = self.selected_verse() else {
+            return;
+        };
         let center = self.scene.position(self.layout, verse) + Vec2::splat(0.5);
         let base = self.flight.map_or(self.camera, |f| f.target());
         let (min, max) = base.visible(self.view);
@@ -786,10 +910,16 @@ impl BabelApp {
         let ctx = ui.ctx().clone();
         let rect = ui.available_rect_before_wrap();
         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+        let previous = self.view;
         self.view = rect;
         let now = ctx.input(|i| i.time);
         if !self.initialized {
             self.initialize(now);
+        } else if previous.size() != rect.size() {
+            self.canvas_resized(previous.size());
+        }
+        if std::mem::take(&mut self.reveal) {
+            self.reveal_selection(now);
         }
 
         if let Some(flight) = self.flight {
@@ -826,9 +956,25 @@ impl BabelApp {
             }
         }
 
+        // Survol d'un nom de livre ou de section : il passe avant les
+        // cellules. Les zones ont été relevées à l'image précédente.
+        let interactive = !in_transition && !response.dragged();
+        self.hovered_label = match self.pointer {
+            Some(pointer) if interactive => self
+                .label_hits
+                .iter()
+                .rev()
+                .find(|(zone, _)| zone.contains(pointer))
+                .map(|(_, selection)| *selection),
+            _ => None,
+        };
+        if self.hovered_label.is_some() {
+            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+
         // Survol : inversion analytique de la disposition.
         let hovered = match self.pointer {
-            Some(pointer) if !in_transition && !response.dragged() => self
+            Some(pointer) if interactive && self.hovered_label.is_none() => self
                 .scene
                 .pick(self.layout, self.camera.screen_to_world(rect, pointer)),
             _ => None,
@@ -839,26 +985,40 @@ impl BabelApp {
         }
 
         if response.double_clicked() {
-            if let Some(verse) = self.hovered {
+            if let Some(label) = self.hovered_label {
+                // Double-clic sur un nom : sélection et vol.
+                self.go(label, now);
+            } else if let Some(verse) = self.hovered {
                 // Double-clic : descend d'un niveau, du livre au verset.
                 let book = usize::from(self.scene.atlas.verses[verse].book);
                 let chapter = usize::from(self.scene.atlas.verses[verse].chapter_index);
-                let target = match self.zoom_level() {
-                    ZoomLevel::Z0 => Target::Book { book },
-                    ZoomLevel::Z1 => Target::Chapter { book, chapter },
-                    _ => Target::Verse(VerseId(verse as u16)),
+                let selection = match self.zoom_level() {
+                    ZoomLevel::Z0 => Selection::Book(book),
+                    ZoomLevel::Z1 => Selection::Chapter { book, chapter },
+                    _ => Selection::Verse(verse),
                 };
-                self.go(target, now);
+                self.go(selection, now);
             }
         } else if response.clicked() {
-            // Clic sur un verset : sélection ; clic dans le vide : rien.
-            self.selected = self.hovered;
+            // Clic sur un nom de livre ou de section : son bilan. Clic sur
+            // un verset : sélection. Clic dans le vide : plus de sélection.
+            self.selected = self.hovered_label.or(self.hovered.map(Selection::Verse));
+            // L'inspecteur va s'ouvrir et rétrécir le canevas : à l'image
+            // suivante, vérifier que la sélection est restée visible.
+            self.reveal = self.hovered_label.is_some();
         }
 
         // Rendu des cellules.
         let pixels_per_point = ctx.pixels_per_point();
         let rounded = self.camera.scale >= self.cfg.z2_px;
         let index = |verse: Option<usize>| verse.map_or(-1, |v| v as i32);
+        // Chapitre, livre ou section sélectionné : le reste s'estompe.
+        let focus = match self.selected {
+            Some(Selection::Verse(_)) | None => None,
+            Some(selection) => self.scene.selection_range(selection),
+        };
+        let (focus_start, focus_end) =
+            focus.map_or((0, 0), |range| (range.start as i32, range.end as i32));
         let uniforms = Uniforms {
             center: self.camera.center.into(),
             viewport: (rect.size() * pixels_per_point).into(),
@@ -867,9 +1027,12 @@ impl BabelApp {
             cell_gap: self.cfg.cell_gap,
             corner: if rounded { self.cfg.corner_radius } else { 0.0 },
             hovered: index(self.hovered),
-            selected: index(self.selected),
+            selected: index(self.selected_verse()),
             srgb_target: u32::from(self.srgb_target),
-            padding: 0.0,
+            focus_start,
+            focus_end,
+            focus_dim: self.cfg.focus_dim,
+            padding: [0.0; 2],
             missing: rgba(theme::MISSING),
             hover_color: [1.0, 1.0, 1.0, theme::HOVER_OPACITY],
             accent: rgba(theme::ACCENT),
@@ -885,6 +1048,7 @@ impl BabelApp {
             .add(egui_wgpu::Callback::new_paint_callback(rect, frame));
 
         let painter = ui.painter_at(rect);
+        self.label_hits.clear();
         self.draw_overlays(&painter, rect, transition, in_transition);
         let tooltip_delay = self.cfg.tooltip_delay_ms as f64 / 1000.0;
         if let (Some(verse), Some(pointer)) = (self.hovered, self.pointer) {
@@ -1008,9 +1172,24 @@ impl eframe::App for BabelApp {
         // Pointeur simulé : sert à capturer le survol et l'infobulle sans
         // souris, pour les captures de test.
         if let Some([x, y]) = self.simulated_pointer {
-            raw_input
-                .events
-                .push(egui::Event::PointerMoved(egui::pos2(x, y)));
+            let pos = egui::pos2(x, y);
+            raw_input.events.push(egui::Event::PointerMoved(pos));
+            // Compté ici et non par image : une image peut passer deux fois
+            // dans l'interface, pas dans ce crochet.
+            self.simulated_inputs += 1;
+            let pressed = match self.simulated_inputs {
+                SIMULATED_CLICK_FRAME => Some(true),
+                input if input == SIMULATED_CLICK_FRAME + 1 => Some(false),
+                _ => None,
+            };
+            if let (true, Some(pressed)) = (self.simulated_click, pressed) {
+                raw_input.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                });
+            }
         }
     }
 

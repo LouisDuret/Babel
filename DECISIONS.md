@@ -325,3 +325,54 @@ et 35 en « inconnue ». La proportion de « reçu » paraît élevée ; il est
 possible que beaucoup de traductions impriment les versets diagnostiques dans
 le corps du texte, entre crochets ou non. À vérifier avant de s'appuyer sur
 cette classification en phase 2.
+
+## ADR 19 — Sélection d'une portée et bilan de son contenu
+
+**Contexte.** Demande de l'utilisateur, hors cahier des charges : pouvoir
+sélectionner un livre ou une catégorie de livres et en obtenir un bilan, comme
+pour un verset. Le viewer ne savait sélectionner qu'un verset.
+
+**Options.** (a) Un mode « bilan » à part, avec sa propre liste de livres ;
+(b) précalculer les agrégats dans l'atlas ; (c) généraliser la sélection et
+calculer le bilan dans le viewer.
+
+**Choix.** (c). La sélection devient une portée : verset, chapitre, livre ou
+section du canon. Le chapitre n'était pas demandé ; il vient sans coût, parce
+que la recherche « Jean 3 » et le fil d'Ariane le désignaient déjà. Toute
+portée est une plage contiguë de versets, ce qui tient en deux uniformes : le
+shader estompe les cellules hors de la plage, sans renvoyer de géométrie.
+
+Le bilan est calculé à la sélection à partir du composite courant
+(`crates/babel-view/src/scope.rs`, fonctions pures) et gardé en cache tant
+que ni la sélection ni les poids ne changent. Le précalcul (b) est écarté :
+U dépend des poids, réglables en direct.
+
+Contenu du bilan : U moyen et médian des versets notés ; rang parmi les pairs
+(livres entre eux, sections entre elles, chapitres entre eux) par U moyen
+décroissant ; part de versets « très incertains » (rang dans la Bible ≥
+`view.hot_rank`, soit le top 10 %) ; rang percentile moyen de chaque signal ;
+histogramme de U avec la Bible entière en repère ; détail du contenu ;
+versets les plus incertains.
+
+**Sélection sur la carte.** Les noms de livres et de sections dessinés
+deviennent des zones cliquables, relevées à chaque image et testées à la
+suivante. Ils passent avant les cellules.
+
+**Conséquences.**
+- Un livre sans verset noté (plusieurs deutérocanoniques sur le sous-corpus)
+  affiche « aucun verset noté » et n'a pas de rang.
+- U moyen d'un livre est une moyenne de rangs percentiles : les écarts entre
+  livres sont faibles (0,36 à 0,58 dans le Pentateuque et les Évangiles), et
+  la grille des chapitres est peu contrastée. Le classement et la part de
+  versets très incertains distinguent mieux les livres que la couleur.
+- Ces agrégats héritent des défauts connus des signaux : les décalages de
+  versification (ADR 10) gonflent le bilan des chapitres concernés.
+- Quand l'inspecteur s'ouvre, le canevas rétrécit : si la carte entière était
+  affichée elle est recadrée, sinon le contenu garde sa place à l'écran, et
+  la caméra ne se déplace que si la sélection est sortie de la vue.
+
+**Vérification.** Dix tests unitaires sur un atlas synthétique (plages, noms,
+rangs, histogramme, sélection sans données, voisins). Clic sur un nom de
+section et de livre vérifié en vue Mur et en vue Hilbert par clic simulé
+(`--pointer X,Y --click`). Non essayé à la main : le double-clic sur un nom
+et la navigation au clavier entre livres.

@@ -6,6 +6,7 @@
 
 use crate::app::BabelApp;
 use crate::scene::Layout;
+use crate::scope::Selection;
 use crate::theme;
 use babel_core::types::RANGE_TOKEN;
 use egui::{Align2, Color32, Painter, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
@@ -15,6 +16,8 @@ use egui::{Align2, Color32, Painter, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2,
 const FADE_SPAN: f32 = 0.25;
 /// Nombre maximal de cellules détaillées (numéro, micro-barres) par image.
 const MAX_DETAILED_CELLS: usize = 6000;
+/// Marge ajoutée autour d'un nom cliquable, en points.
+const LABEL_HIT_MARGIN: f32 = 3.0;
 /// Luminance au-dessus de laquelle le texte posé sur une cellule est sombre.
 const DARK_INK_ABOVE: f32 = 0.30;
 
@@ -85,11 +88,19 @@ impl BabelApp {
         let wall_alpha = 1.0 - transition;
         let hilbert_alpha = transition;
 
+        // Les noms dessinés deviennent des zones cliquables pour l'image
+        // suivante.
         if wall_alpha > 0.01 {
-            self.draw_wall_labels(painter, rect, wall_alpha);
+            let hits = self.draw_wall_labels(painter, rect, wall_alpha);
+            if !in_transition {
+                self.label_hits.extend(hits);
+            }
         }
         if hilbert_alpha > 0.01 {
-            self.draw_hilbert_labels(painter, rect, hilbert_alpha);
+            let hits = self.draw_hilbert_labels(painter, rect, hilbert_alpha);
+            if !in_transition {
+                self.label_hits.extend(hits);
+            }
         }
         if !in_transition {
             let detail = fade_in(scale, self.cfg.z2_px);
@@ -100,11 +111,25 @@ impl BabelApp {
         }
     }
 
+    /// Couleur d'un nom cliquable : cyan quand il est survolé ou désigne la
+    /// sélection, sa couleur de repos sinon.
+    fn label_color(&self, selection: Selection, rest: Color32, alpha: f32) -> Color32 {
+        let active = self.hovered_label == Some(selection) || self.selected == Some(selection);
+        theme::fade(if active { theme::ACCENT } else { rest }, alpha)
+    }
+
     /// Noms des sections, des livres et numéros de chapitres de la vue Mur.
-    fn draw_wall_labels(&self, painter: &Painter, rect: Rect, alpha: f32) {
+    /// Renvoie les zones cliquables des noms dessinés.
+    fn draw_wall_labels(
+        &self,
+        painter: &Painter,
+        rect: Rect,
+        alpha: f32,
+    ) -> Vec<(Rect, Selection)> {
         let scale = self.camera.scale;
         let atlas = &self.scene.atlas;
         let visible = rect.expand(200.0);
+        let mut hits = Vec::new();
 
         let section_font = theme::sized((scale * 2.6).clamp(11.0, 22.0));
         for anchor in &atlas.wall_sections {
@@ -115,19 +140,22 @@ impl BabelApp {
             let Some(name) = atlas.sections.get(usize::from(anchor.section)) else {
                 continue;
             };
-            painter.text(
+            let selection = Selection::Section(usize::from(anchor.section));
+            let drawn = painter.text(
                 position,
                 Align2::LEFT_BOTTOM,
                 name,
                 section_font.clone(),
-                theme::fade(theme::TEXT_PRIMARY, alpha),
+                self.label_color(selection, theme::TEXT_PRIMARY, alpha),
             );
+            hits.push((drawn.expand(LABEL_HIT_MARGIN), selection));
         }
 
         let header = atlas.wall_header_rows as f32;
         let book_font = theme::sized((scale * 2.2).clamp(9.0, 16.0));
-        let color = theme::fade(theme::TEXT_SECONDARY, alpha);
-        for book in &atlas.books {
+        for (index, book) in atlas.books.iter().enumerate() {
+            let selection = Selection::Book(index);
+            let color = self.label_color(selection, theme::TEXT_SECONDARY, alpha);
             let position = self.to_screen(
                 rect,
                 vec2(book.wall_label[0], book.wall_label[1] + header - 0.4),
@@ -143,13 +171,14 @@ impl BabelApp {
             } else {
                 &book.code
             };
-            painter.text(
+            let drawn = painter.text(
                 position,
                 Align2::LEFT_BOTTOM,
                 text,
                 book_font.clone(),
                 color,
             );
+            hits.push((drawn.expand(LABEL_HIT_MARGIN), selection));
         }
 
         // Z1 : numéros de chapitres en marge.
@@ -173,12 +202,21 @@ impl BabelApp {
                 }
             }
         }
+        hits
     }
 
     /// Noms des livres au centroïde de leur territoire, vue Hilbert.
-    fn draw_hilbert_labels(&self, painter: &Painter, rect: Rect, alpha: f32) {
+    /// Renvoie les zones cliquables des noms dessinés.
+    fn draw_hilbert_labels(
+        &self,
+        painter: &Painter,
+        rect: Rect,
+        alpha: f32,
+    ) -> Vec<(Rect, Selection)> {
         let scale = self.camera.scale;
-        for book in &self.scene.atlas.books {
+        let mut hits = Vec::new();
+        for (index, book) in self.scene.atlas.books.iter().enumerate() {
+            let selection = Selection::Book(index);
             // Côté d'un carré de même aire que le territoire du livre.
             let extent = (book.len as f32).sqrt() * scale;
             let center = self.to_screen(rect, book.hilbert_centroid.into());
@@ -186,7 +224,7 @@ impl BabelApp {
                 continue;
             }
             let font = theme::sized((extent * 0.14).clamp(10.0, 22.0));
-            let color = theme::fade(theme::TEXT_PRIMARY, alpha);
+            let color = self.label_color(selection, theme::TEXT_PRIMARY, alpha);
             let full = painter.layout_no_wrap(book.name_fr.clone(), font.clone(), color);
             let text = if full.size().x <= extent * 0.9 {
                 &book.name_fr
@@ -199,7 +237,9 @@ impl BabelApp {
             let box_rect = Rect::from_center_size(center, galley.size()).expand2(vec2(5.0, 2.0));
             painter.rect_filled(box_rect, 4.0, theme::fade(theme::BG_CANVAS, 0.72 * alpha));
             painter.galley(box_rect.min + vec2(5.0, 2.0), galley, color);
+            hits.push((box_rect, selection));
         }
+        hits
     }
 
     /// Z2 et Z3 : numéro de verset, micro-barres, puis carte de verset.
@@ -323,7 +363,9 @@ impl BabelApp {
 
     /// Contour de la sélection, visible même quand la cellule est minuscule.
     fn draw_selection_marker(&self, painter: &Painter, rect: Rect) {
-        let Some(verse) = self.selected else { return };
+        let Some(verse) = self.selected_verse() else {
+            return;
+        };
         let scale = self.camera.scale;
         if scale >= self.cfg.z1_px {
             // Assez grande : le shader dessine déjà l'anneau dans la cellule.

@@ -27,7 +27,9 @@ struct Uniforms {
     hovered: i32,
     selected: i32,
     srgb_target: u32,
-    _padding: f32,
+    focus_start: i32,
+    focus_end: i32,
+    focus_dim: f32,
     missing: vec4<f32>,
     hover_color: vec4<f32>,
     accent: vec4<f32>,
@@ -113,6 +115,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
 
     let index = i32(in.index);
+    // Une portée est sélectionnée : le reste de la carte s'estompe.
+    if (u.focus_end > u.focus_start && (index < u.focus_start || index >= u.focus_end)) {
+        color = mix(color, u.background.rgb, u.focus_dim);
+    }
     if (index == u.selected) {
         let width = clamp(0.03 * size, 2.0, 5.0);
         let ring = smoothstep(-width - 0.5, -width + 0.5, distance);
@@ -151,7 +157,14 @@ pub struct Uniforms {
     pub selected: i32,
     /// 1 si la cible de rendu est en sRGB (le shader convertit alors).
     pub srgb_target: u32,
-    pub padding: f32,
+    /// Plage de versets de la portée sélectionnée (chapitre, livre,
+    /// section) ; vide (`focus_end <= focus_start`) sans sélection.
+    pub focus_start: i32,
+    pub focus_end: i32,
+    /// Part de leur couleur que perdent les cellules hors de la portée.
+    pub focus_dim: f32,
+    /// Alignement des vec4 qui suivent sur 16 octets.
+    pub padding: [f32; 2],
     pub missing: [f32; 4],
     pub hover_color: [f32; 4],
     pub accent: [f32; 4],
@@ -434,12 +447,14 @@ mod tests {
 
     #[test]
     fn disposition_memoire_des_uniformes() {
-        // La structure WGSL fait 112 octets ; les vec4 commencent à 48.
-        assert_eq!(std::mem::size_of::<Uniforms>(), 112);
+        // La structure WGSL fait 128 octets ; les vec4 commencent à 64.
+        assert_eq!(std::mem::size_of::<Uniforms>(), 128);
         assert_eq!(std::mem::offset_of!(Uniforms, scale), 16);
         assert_eq!(std::mem::offset_of!(Uniforms, hovered), 32);
-        assert_eq!(std::mem::offset_of!(Uniforms, missing), 48);
-        assert_eq!(std::mem::offset_of!(Uniforms, background), 96);
+        assert_eq!(std::mem::offset_of!(Uniforms, focus_start), 44);
+        assert_eq!(std::mem::offset_of!(Uniforms, focus_dim), 52);
+        assert_eq!(std::mem::offset_of!(Uniforms, missing), 64);
+        assert_eq!(std::mem::offset_of!(Uniforms, background), 112);
         assert_eq!(std::mem::size_of::<Instance>(), 16);
     }
 }

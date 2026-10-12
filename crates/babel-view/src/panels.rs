@@ -5,11 +5,11 @@ use crate::app::{BabelApp, Suggestion};
 use crate::overlay::{decimal, percentile};
 use crate::palette::PaletteKind;
 use crate::scene::{Layout, Metric};
+use crate::scope::Selection;
 use crate::theme;
 use babel_core::books::suggest_books;
-use babel_core::text::fold_keep_spaces;
-use babel_core::versification::Target;
-use babel_core::{BOOKS, VerseId, reference};
+use babel_core::text::{fold, fold_keep_spaces};
+use babel_core::{BOOKS, reference};
 use egui::{Align, Color32, Frame, Margin, Rect, RichText, Sense, Stroke, StrokeKind, vec2};
 
 /// Identifiant du champ de recherche, pour lui donner le focus (Ctrl+K).
@@ -25,11 +25,14 @@ const MAX_WEIGHT: f32 = 2.0;
 /// Signaux prévus par le cahier des charges et absents de l'atlas.
 const FUTURE_SIGNALS: [&str; 2] = ["Alignement", "Sémantique"];
 
-fn panel_frame() -> Frame {
+/// Longueur minimale d'une recherche pour proposer une section du canon.
+const MIN_SECTION_QUERY: usize = 2;
+
+pub(crate) fn panel_frame() -> Frame {
     Frame::new().fill(theme::BG_PANEL)
 }
 
-fn heading(ui: &mut egui::Ui, text: &str) {
+pub(crate) fn heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(6.0);
     ui.label(
         RichText::new(text)
@@ -40,7 +43,7 @@ fn heading(ui: &mut egui::Ui, text: &str) {
 }
 
 /// Barre horizontale remplie à `share`, de la couleur donnée.
-fn bar(ui: &mut egui::Ui, width: f32, share: f32, color: Color32) {
+pub(crate) fn bar(ui: &mut egui::Ui, width: f32, share: f32, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, 8.0), Sense::hover());
     ui.painter().rect_filled(rect, 3.0, theme::BORDER_SUBTLE);
     if share.is_finite() {
@@ -148,57 +151,66 @@ impl BabelApp {
     }
 
     pub(crate) fn accept(&mut self, suggestion: &Suggestion, now: f64) {
-        self.go(suggestion.target, now);
+        self.go(suggestion.selection, now);
         self.search.clear();
         self.suggestions.clear();
     }
 
-    /// Propositions pour la recherche : référence exacte, livres, puis
-    /// texte libre dans la première traduction de référence.
+    /// Nature d'une sélection, en clair, pour les propositions.
+    fn selection_detail(&self, selection: Selection) -> String {
+        let atlas = &self.scene.atlas;
+        match selection {
+            Selection::Verse(_) => "verset".to_string(),
+            Selection::Chapter { .. } => "chapitre".to_string(),
+            Selection::Book(book) => atlas
+                .books
+                .get(book)
+                .map_or(String::new(), |b| format!("livre · {}", b.name_en)),
+            Selection::Section(section) => {
+                let books = self.scene.section_books(section).len();
+                let plural = if books > 1 { "s" } else { "" };
+                format!("section · {books} livre{plural}")
+            }
+        }
+    }
+
+    /// Propositions pour la recherche : référence exacte, sections du
+    /// canon, livres, puis texte libre dans la première traduction de
+    /// référence.
     pub(crate) fn compute_suggestions(&mut self) {
         self.suggestions.clear();
         let query = self.search.trim().to_string();
         if query.is_empty() {
             return;
         }
-        let versification = &self.scene.versification;
-        let label = |target: Target| -> (String, String) {
-            match target {
-                Target::Verse(id) => (versification.label_fr(id), "verset".to_string()),
-                Target::Chapter { book, chapter } => {
-                    let b = &versification.books()[book];
-                    (
-                        format!("{} {}", b.name_fr, b.chapters[chapter].number),
-                        "chapitre".to_string(),
-                    )
-                }
-                Target::Book { book } => {
-                    let b = &versification.books()[book];
-                    (b.name_fr.clone(), format!("livre · {}", b.name_en))
+
+        let mut found: Vec<Selection> = Vec::new();
+        if let Some(target) = reference::lookup(&query, &self.scene.versification) {
+            found.push(Selection::from(target));
+        }
+        // Sections dont le nom commence par la recherche : « Évangiles ».
+        let folded = fold(&query);
+        if folded.chars().count() >= MIN_SECTION_QUERY {
+            for (section, name) in self.scene.atlas.sections.iter().enumerate() {
+                if fold(name).starts_with(&folded) && !self.scene.section_books(section).is_empty()
+                {
+                    found.push(Selection::Section(section));
                 }
             }
-        };
-
-        let mut suggestions: Vec<Suggestion> = Vec::new();
-        if let Some(target) = reference::lookup(&query, versification) {
-            let (label, detail) = label(target);
-            suggestions.push(Suggestion {
-                label,
-                detail,
-                target,
-            });
         }
         for index in suggest_books(&query, MAX_SUGGESTIONS) {
-            let Some(book) = versification.book_index(BOOKS[index].usfm) else {
-                continue;
-            };
-            let target = Target::Book { book };
-            if !suggestions.iter().any(|s| s.target == target) {
-                let (label, detail) = label(target);
+            if let Some(book) = self.scene.versification.book_index(BOOKS[index].usfm) {
+                found.push(Selection::Book(book));
+            }
+        }
+
+        let mut suggestions: Vec<Suggestion> = Vec::new();
+        for selection in found {
+            if !suggestions.iter().any(|s| s.selection == selection) {
                 suggestions.push(Suggestion {
-                    label,
-                    detail,
-                    target,
+                    label: self.scene.selection_label(selection),
+                    detail: self.selection_detail(selection),
+                    selection,
                 });
             }
         }
@@ -243,7 +255,7 @@ impl BabelApp {
             self.suggestions.push(Suggestion {
                 label: self.scene.atlas.label_fr(verse),
                 detail: format!("{excerpt}…"),
-                target: Target::Verse(VerseId(verse as u16)),
+                selection: Selection::Verse(verse),
             });
         }
     }
@@ -390,13 +402,19 @@ impl BabelApp {
     }
 
     pub(crate) fn inspector_panel(&mut self, ui: &mut egui::Ui, now: f64) {
-        let Some(verse) = self.selected else { return };
+        let Some(selection) = self.selected else {
+            return;
+        };
         egui::Panel::right("inspecteur")
             .exact_size(theme::RIGHT_PANEL_WIDTH)
             .resizable(false)
             .frame(panel_frame().inner_margin(Margin::same(16)))
             .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.inspector(ui, verse, now));
+                egui::ScrollArea::vertical().show(ui, |ui| match selection {
+                    Selection::Verse(verse) => self.inspector(ui, verse, now),
+                    // Chapitre, livre ou section : le bilan de son contenu.
+                    scope => self.scope_inspector(ui, scope, now),
+                });
             });
     }
 
@@ -558,7 +576,7 @@ impl BabelApp {
             let offset = pointer - rect.min;
             let index = (offset.y / size) as usize * per_row + (offset.x / size) as usize;
             if index < len {
-                self.selected = Some(first + index);
+                self.selected = Some(Selection::Verse(first + index));
                 let _ = now;
             }
         }
@@ -596,19 +614,27 @@ impl BabelApp {
             });
     }
 
-    /// Fil d'Ariane cliquable : Bible › NT › Jean › 1 › 1.
+    /// Fil d'Ariane cliquable : Bible › NT › Évangiles › Jean › 1 › 1. Chaque
+    /// maillon sélectionne sa portée et y vole ; le dernier, en cyan, est la
+    /// sélection courante.
     fn breadcrumb(&mut self, ui: &mut egui::Ui, now: f64) {
-        let crumb = |ui: &mut egui::Ui, text: String| {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(text)
-                        .font(theme::secondary())
-                        .color(theme::TEXT_PRIMARY),
+        let current = self.selected;
+        let crumb =
+            |ui: &mut egui::Ui, text: String, selection: Option<Selection>| {
+                let active = selection.is_some() && selection == current;
+                ui.add(
+                    egui::Label::new(RichText::new(text).font(theme::secondary()).color(
+                        if active {
+                            theme::ACCENT
+                        } else {
+                            theme::TEXT_PRIMARY
+                        },
+                    ))
+                    .sense(Sense::click()),
                 )
-                .sense(Sense::click()),
-            )
-            .clicked()
-        };
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            };
         let separator = |ui: &mut egui::Ui| {
             ui.label(
                 RichText::new("›")
@@ -617,22 +643,30 @@ impl BabelApp {
             );
         };
 
-        if crumb(ui, "Bible".to_string()) {
+        if crumb(ui, "Bible".to_string(), None) {
+            self.selected = None;
             self.fit_all(now);
         }
-        let Some(verse) = self.selected.or(self.hovered) else {
+        // La sélection, ou à défaut ce qui est sous le pointeur.
+        let Some(shown) = self
+            .selected
+            .or(self.hovered_label)
+            .or(self.hovered.map(Selection::Verse))
+        else {
             return;
         };
-        let v = self.scene.atlas.verses[verse];
-        let book = usize::from(v.book);
-        let Some(info) = self.scene.atlas.books.get(book) else {
+        let path = self.scene.path(shown);
+        let Some(section) = path.section else {
             return;
         };
-        let testament = ["AT", "NT", "DC"]
-            .get(usize::from(info.testament))
-            .copied()
+        let section_name = self.scene.selection_label(Selection::Section(section));
+        let testament = self
+            .scene
+            .section_books(section)
+            .next()
+            .and_then(|book| self.scene.atlas.books.get(book))
+            .and_then(|book| ["AT", "NT", "DC"].get(usize::from(book.testament)).copied())
             .unwrap_or("");
-        let name = info.name_fr.clone();
 
         separator(ui);
         ui.label(
@@ -640,23 +674,37 @@ impl BabelApp {
                 .font(theme::secondary())
                 .color(theme::TEXT_SECONDARY),
         );
+        let mut clicked: Option<Selection> = None;
         separator(ui);
-        if crumb(ui, name) {
-            self.go(Target::Book { book }, now);
+        let selection = Selection::Section(section);
+        if crumb(ui, section_name, Some(selection)) {
+            clicked = Some(selection);
         }
-        separator(ui);
-        if crumb(ui, v.chapter.to_string()) {
-            self.go(
-                Target::Chapter {
-                    book,
-                    chapter: usize::from(v.chapter_index),
-                },
-                now,
-            );
+        if let Some(book) = path.book {
+            separator(ui);
+            let selection = Selection::Book(book);
+            if crumb(ui, self.scene.selection_label(selection), Some(selection)) {
+                clicked = Some(selection);
+            }
+            if let Some(chapter) = path.chapter {
+                separator(ui);
+                let selection = Selection::Chapter { book, chapter };
+                let number = self.scene.atlas.books[book].chapters[chapter].number;
+                if crumb(ui, number.to_string(), Some(selection)) {
+                    clicked = Some(selection);
+                }
+            }
         }
-        separator(ui);
-        if crumb(ui, v.verse.to_string()) {
-            self.go(Target::Verse(VerseId(verse as u16)), now);
+        if let Some(verse) = path.verse {
+            separator(ui);
+            let selection = Selection::Verse(verse);
+            let number = self.scene.atlas.verses[verse].verse;
+            if crumb(ui, number.to_string(), Some(selection)) {
+                clicked = Some(selection);
+            }
+        }
+        if let Some(selection) = clicked {
+            self.go(selection, now);
         }
     }
 

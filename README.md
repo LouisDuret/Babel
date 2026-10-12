@@ -15,7 +15,7 @@ ne sont pas commencées.
 Le pipeline a tourné sur un **sous-corpus** d'eBible : les langues qui ont au
 moins deux traductions (278 fichiers, 235 traductions ingérées, 74 langues).
 Le corpus complet (1 079 fichiers, 2,3 Go) n'a pas été téléchargé : le disque
-système de la machine de développement est presque plein. Voir ADR 2.
+système de la machine de développement était presque plein à ce moment-là. Voir ADR 2.
 
 ### Phase 0 — Socle et ingestion
 
@@ -41,6 +41,28 @@ traductions de référence, bande du chapitre), panneau Couches (interrupteurs,
 poids en direct, filtre « canon protestant »), fil d'Ariane, raccourcis,
 capture, état persistant.
 
+Hors cahier des charges, ajouté à la demande : **sélection d'un chapitre,
+d'un livre ou d'une section du canon, avec le bilan de son contenu** (voir
+ci-dessous et ADR 19).
+
+### Sélection et bilan
+
+La sélection est un verset, un chapitre, un livre ou une section
+(Pentateuque, Évangiles…). On sélectionne :
+
+- en cliquant le nom d'un livre ou d'une section sur la carte (double-clic :
+  la caméra s'y rend) ;
+- par le fil d'Ariane, dont chaque maillon sélectionne sa portée ;
+- par la recherche : « Jean », « Jean 3 », « Évangiles » ;
+- au clavier : ← → passent au voisin de même nature, Échap désélectionne.
+
+Le reste de la carte s'estompe et l'inspecteur affiche le bilan : U moyen et
+rang parmi les pairs, médiane, part de versets très incertains, rang moyen de
+chaque signal, histogramme de U comparé à la Bible entière, détail du contenu
+(livres d'une section, chapitres d'un livre, versets d'un chapitre) et versets
+les plus incertains. Tout y est cliquable pour descendre d'un niveau. Le bilan
+suit les poids réglés dans le panneau Couches.
+
 Pas encore : vue Piste, mode comparaison, zoom Z4 (mots), minimap, mode
 poster, filtres par famille / écriture / base textuelle / licence, texte
 façonné par cosmic-text (hébreu de droite à gauche), pyramide d'agrégats.
@@ -64,7 +86,7 @@ Options de `view` utiles au développement :
 
 - `--search "Jn 3:16"` : lance une recherche à l'ouverture et suit la première proposition ;
 - `--screenshot fichier.png` : enregistre une capture puis quitte (fenêtre de 1600 × 960) ;
-- `--pointer 900x520` : simule un pointeur, pour capturer le survol et l'infobulle ;
+- `--pointer 900x520` : simule un pointeur, pour capturer le survol et l'infobulle ; avec `--click`, clique une fois à cet endroit ;
 - `--bench 3000 --size 2560x1400` : mesure les images par seconde, VSync coupée ;
 - `--stats`, `--layout hilbert`, `--windowed`.
 
@@ -87,7 +109,7 @@ crates/babel-ingest      eBible → Parquet, métadonnées, rapport qualité
 crates/babel-signals     S_omit, S_len (median polish), S_intra (chrF), redondance
 crates/babel-score       rangs percentiles, composite U(v), tests de santé
 crates/babel-atlas       atlas.bin (rkyv), dispositions Mur et Hilbert, texts.zst
-crates/babel-view        application graphique (eframe/egui + wgpu)
+crates/babel-view        application graphique (eframe/egui + wgpu) ; `scope.rs` calcule les bilans
 apps/babel               CLI (clap) : doctor, fetch, pipeline avec cache
 tests/fixtures/mini      mini-corpus synthétique sur disque
 data/                    ignoré par git : corpus brut, Parquet, atlas, rapports
@@ -123,6 +145,6 @@ un outil système (CUDA, cuDNN, TensorRT), modifier une décision verrouillée d
 ## Particularités de la machine de développement
 
 - MSVC est installé dans `C:\VS` sans être déclaré dans le registre. Le fichier `.cargo/config.toml` (non suivi par git) fournit `INCLUDE` et `LIB` pour que `zstd-sys` compile.
-- Le disque `C:` est presque plein ; `D:` a de la place. Pour y envoyer les données, changer `paths.data` dans `config/babel.toml`. Le dossier `target/debug` (tests, clippy) pèse environ 3,5 Go et peut être supprimé à tout moment.
+- Le disque `C:` était presque plein au début du projet (40 Go libres au 12 octobre 2026) ; `D:` a de la place. Pour y envoyer les données, changer `paths.data` dans `config/babel.toml`. Le dossier `target/debug` (tests, clippy) pèse environ 3,5 Go et peut être supprimé à tout moment.
 - cuDNN est absent du PATH : `babel doctor` retient DirectML pour la phase 2.
 - L'écran est à 74 Hz : avec la VSync, le viewer plafonne à 74 images/s.
